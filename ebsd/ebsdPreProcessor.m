@@ -32,8 +32,9 @@ The general prescription:
 * Write txt file indicating transformations applied to each slice
 %}
 clear;clc;
-MASK_THRESHOLD = 0.01;
-FIDUCIAL_DIAMETER = 2;
+INIT_MASK_THRESHOLD = 0.01; % CI < threshold indicates possible marker
+MIN_FIDUCIAL_DIAMETER = 4; % number of pixels wide the markers must be
+INIT_CI_DILATOR = 2;
 
 %% Read in ANG files
 
@@ -70,8 +71,8 @@ Column List:
                 angFiles(j).FileName=fileList(i).name;
                 angFiles(j).FileHeader=[];
                 angFiles(j).FileData=[];
-                angFiles(j).CI_Threshold = MASK_THRESHOLD;
-                angFiles(j).Defect_Diam = FIDUCIAL_DIAMETER;
+                angFiles(j).CI_Threshold = INIT_MASK_THRESHOLD;
+                angFiles(j).Defect_Diam = MIN_FIDUCIAL_DIAMETER;
                 angFiles(j).Defect_Centers=[];
                 angFiles(j).XY_Translation = [];
                 angFiles(j).isTranslated = false;
@@ -115,32 +116,10 @@ for i = 1:numel(angFiles)
     rawfile=importdata(strcat(angFolder,'\\',angFiles(i).FileName),' ',38);
     angFiles(i).FileHeader = rawfile.textdata;
     angFiles(i).FileData=rawfile.data;
-    clear rawfile;
+    clear rawfile
     
-    %{ 
-    Convert X, Y, IQ vectors into rectangular matrix for image generation
-          --> ANG files loop x for a given y, then increment y <--
-    X and Y values in the ANG file are not guaranteed to be integers, but 
-    image representation requires row,column assignment, e.g. integer 
-    subscripts. Divide by the ANG file's self-reported step size, convert
-    to integer, and add 1 (because 0,0 isn't a valid matrix index position)
-    %} 
-    xx = angFiles(i).FileData(:,4);
-    yy = angFiles(i).FileData(:,5);
-    angFiles(i).xxx = 1+int64(xx ./ str2double(strrep(angFiles(i).FileHeader{27},'# XSTEP: ','')));
-    angFiles(i).yyy = 1+int64(yy ./ str2double(strrep(angFiles(i).FileHeader{28},'# YSTEP: ','')));
-    % Check for duplicate indices in the [yyy xxx] matrix
-    if (sum(sum(accumarray([angFiles(i).yyy angFiles(i).xxx],1)>1)) ~= 0)
-        % All indices should be 1 if no duplicates, so the sum should
-        % equal the number. If a duplication occurs, there will be a 2 and
-        % a 0 somewhere (or 3 and two 0's... etc). However, 0's can occur
-        % from padding of the matrix (e.g. noncontiguous data or
-        % nonrectangular data
-        disp(['WARNING - ' angFiles(i).FileName ' has duplicated XY indices']);
-        % only a warning is issued at the moment
-    end
-    % Assemble the array of Image Quality data for display as an image
-    IQArray=accumarray([angFiles(i).yyy angFiles(i).xxx],angFiles(i).FileData(:,6));
+    % Obtain X-by-Y matrix of IQ values for image rendering
+    IQArray=angfile2xydata(angFiles(i),'iq');
     angFiles(i).IQimage=mat2gray(IQArray);
 
     % Render side-by-side plot of IQ and the thresholded pixels
@@ -163,7 +142,7 @@ for i = 1:numel(angFiles)
     while iterate_threshold
         % Create ANG-specific mask for CI < $MASK_THRESHOLD
         cipixels=1-(angFiles(i).FileData(:,7)<angFiles(i).CI_Threshold);
-        scatter(ciplot,xx,yy,1,cipixels,'filled');
+        scatter(ciplot,angFiles(i).FileData(:,4),angFiles(i).FileData(:,5),1,cipixels,'filled');
         title(strcat('CI Threshold = ',num2str(angFiles(i).CI_Threshold)));
         xlabel('µm');ylabel('µm');
         ciplot.YDir='reverse';
@@ -197,15 +176,16 @@ for i = 1:numel(angFiles)
     
     % User has iteratively chosen the appropriate CI to use. Convert the
     % cipixels vector into an image matrix as was done for IQimage
-    CIArray=accumarray([angFiles(i).yyy angFiles(i).xxx],cipixels);
-    angFiles(i).CIimage=mat2gray(CIArray);
-    subplot(iqplot) % overwrite IQmap with the CI image based on the threshold
-    imshow(angFiles(i).CIimage);title('Original CI image');
-    clear cipixels xx yy iterate_threshold
+    CIArray=angfile2xydata(angFiles(i),'ci');
+    angFiles(i).RawCIimage=mat2gray(CIArray);
+    angFiles(i).CIimage=mat2gray(1-(CIArray<angFiles(i).CI_Threshold));
+    subplot(iqplot) % overwrite IQmap with the thresholded CI image
+    imshow(angFiles(i).CIimage);title('Original Thresholded CI image');
+    clear cipixels iterate_threshold CIArray
     
     % Use pixel erosion and growth to remove isolated low-CI pixels 
     refine_selection = true; continue_refine = false;
-    refine_operator_radius = 1;
+    refine_operator_radius = INIT_CI_DILATOR;
     while refine_selection
         if continue_refine == false;
             angFiles(i).dilatorHistory=num2str(refine_operator_radius);
@@ -254,20 +234,20 @@ for i = 1:numel(angFiles)
     clear continue_refine refine_selection
     
     % Analyze modified CI image for contiguous black regions of size
-    % .Defect_Diam and report centers in .Defect_Centers[x y]
+    % .Defect_Diam and report centers, radius in .Defect_Centers[x y]
     % Analyze coordinates for circular regions of diameter .Defect_Diam
     angFiles(i).defects=bwboundaries(1-angFiles(i).modCIimage,'noholes');
-    centers=zeros(size(angFiles(i).defects,1),2);
+    centers=zeros(size(angFiles(i).defects,1),3);
     for j=1:size(angFiles(i).defects,1)
         xyr=CircleFitByPratt(angFiles(i).defects{j});
-        if xyr(1,3) >= angFiles(i).Defect_Diam
+        if ((xyr(1,3)*2) >= angFiles(i).Defect_Diam)
             centers(j,:) = [xyr(1,1) xyr(1,2) sqrt(xyr(1,1)^2+xyr(1,2)^2)];
         end
     end
     disp(['Found ' num2str(sum(centers(:,1)>1)) ' markers in ' ...
             angFiles(i).FileName]);
     angFiles(i).Defect_Centers=centers; % x | y | distance from origin
-    minDistRow=find(centers==min(centers));
+    minDistRow=find(centers==min(min(centers)));
     angFiles(i).XY_Translation=[centers(minDistRow,1) centers(minDistRow,2)];
     clear xyr centers
     
