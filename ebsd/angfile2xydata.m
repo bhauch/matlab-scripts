@@ -1,8 +1,7 @@
 function xydata = angfile2xydata(angfile,selector)
-%  ANGFILE2XYDATA     convert the by-row representation of a TSL EBSD scan
-%  into an image representation for the Image Quality and the Confidence
-%  Index datasets. If CI, the raw data is thresholded using the current
-%  value in the angfile structure
+%  ANGFILE2XYDATA   convert the by-row representation of a TSL EBSD scan
+%  into an image representation for the Image Quality or the Confidence
+%  Index datasets.
 % ANGFILE - STRUCT: the .ANG file exported from TSL OIM Analysis
 % SELECTOR - STRING: either 'IQ' or 'CI' 
   xx = angfile.FileData(:,4); % Column vector of X values

@@ -14,22 +14,16 @@ The general prescription:
       those x,y that fall into circular defect clusters 
     - Compute the centers of these clusters 
     - Compute x,y translation to move the scan origin to the center of the
-      closest defect cluster & store 
-    - Perform the x,y origin translation on all points in that ANG file
-
-* Choose an ANG file to serve as the reference orientation 
-* For other ANG files 
-    - Compute the rotational transformation needed to make the line between
-      first & last defect cluster centers parallel/co-linear with that of 
-      the reference slice (could look at other inter-defect lines too) 
-    - Perform transformation on the ANG file
-
-* For each slice: 
-    - Perform inverse x,y origin translation to remove negative x,y (unless 
-      DREAM3D can handle them) 
-    - Write new ANG file with prefix to prevent overwriting data inputs
-
-* Write txt file indicating transformations applied to each slice
+      closest defect cluster
+    - Compute the angle of the best-fit line through the centers, relative
+      to the x-axis
+    - Perform transforms and rotations on the image reference object
+    - Extract shifted coordinates from image reference object
+    - Write new ANG file
+        - Perform additional X,Y shift if DREAM3D cannot handle negative XY
+        in its ANG importer
+        - Prefix the files and place in a subdirectory
+        - Include "history" txt file for rapid reprocessing
 %}
 clear;clc;
 INIT_MASK_THRESHOLD = 0.01; % CI < threshold indicates possible marker
@@ -55,13 +49,10 @@ Column List:
     FileName - name of the file
     FileData - the file's data
     CI_Threshold - custom threshold used for isolating defects
-    Defect_Diam - Diameter used for defect-finding
+    Defect_Diam - Threshold Diameter used for defect-finding
     Defect_Centers - centers of found defects
-    XY_Translation - Coordinate shift used to make one defect (0,0)
-    isTranslated - whether the file data is currently translated'
-    RotTransform - the rotational transformation used to align the line
-                    between the first and last defects' centers
-    isRotated - whether the file data is currently rotated
+    XY_Translation - Coordinate shift used to make one defect center =(0,0)
+    RotAngle - the rotation angle for the best-fit line through the defects
 %}
         j = numel(fileList);
         hasANGfiles = false;
@@ -75,9 +66,7 @@ Column List:
                 angFiles(j).Defect_Diam = MIN_FIDUCIAL_DIAMETER;
                 angFiles(j).Defect_Centers=[];
                 angFiles(j).XY_Translation = [];
-                angFiles(j).isTranslated = false;
-                angFiles(j).RotTransform = [];
-                angFiles(j).isRotated = false;
+                angFiles(j).RotAngle = 0;
                 j = j - 1;
             end
         end
@@ -241,20 +230,39 @@ for i = 1:numel(angFiles)
     for j=1:size(angFiles(i).defects,1)
         xyr=CircleFitByPratt(angFiles(i).defects{j});
         if ((xyr(1,3)*2) >= angFiles(i).Defect_Diam)
-            centers(j,:) = [xyr(1,1) xyr(1,2) sqrt(xyr(1,1)^2+xyr(1,2)^2)];
-        end
+            centers(j,:) = [xyr(1,2) xyr(1,1) sqrt(xyr(1,1)^2+xyr(1,2)^2)];
+        end % images have inverted x,y referencing, hence the 1,2 then 1,1 above
     end
     disp(['Found ' num2str(sum(centers(:,1)>1)) ' markers in ' ...
             angFiles(i).FileName]);
     angFiles(i).Defect_Centers=centers; % x | y | distance from origin
-    minDistRow=find(centers==min(min(centers)));
+    
+    % Calculate the XY translation based on the closest-to-the-origin
+    % defect center.
+    minDistRow=mod(find(centers==min(centers(:,3))),size(centers,1));
     angFiles(i).XY_Translation=[centers(minDistRow,1) centers(minDistRow,2)];
     clear xyr centers
     
-    % Perform the X-Y transpose by shifting all points in accordance with
-    % the XY center of the defect with the shortest distance
+    % Determine the rotational relationship between the datafile and the
+    % x-axis and store the rotation angle
+    angFiles(i).RotAngle=getRotation(angFiles(i));
     
+    % Generate spatial reference object
+    angFiles(i).imgRef = imref2d(size(IQArray), ...
+             str2double(strrep(angFiles(i).FileHeader{27},'# XSTEP: ','')), ...
+             str2double(strrep(angFiles(i).FileHeader{28},'# YSTEP: ','')));
     
+    % Perform translation and rotation
+    [angFiles(i).t_IQ, angFiles(i).imgRefT] = imtranslate(angFiles(i).IQimage, ...
+                                   angFiles(i).imgRef, ...
+                                   angFiles(i).XY_Translation, ...
+                                   'OutputView','full');
+    figure;imshow(angFiles(i).t_IQ); % check result
+    [angFiles(i).RT_IQ, angFiles(i).imgRefR] = imwarp(angFiles(i).IQimage, ...
+                                   angFiles(i).imgRefT, ...
+                                   getRotationTransform(angFiles(i).RotAngle), ...
+                                   'OutputView','full');
+    figure;imshow(angFiles(i).RT_IQ); % check result   
     break % remove to iterate all angFiles
 end
 disp('EBSD preprocessing has completed');
