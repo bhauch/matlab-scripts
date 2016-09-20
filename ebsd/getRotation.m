@@ -3,7 +3,7 @@ function rot = getRotation(angfile)
 %  best-fit connecting line, and then computes the angle with the x-axis. 
 %  Angle given in radians
 
-trnsX = angfile.Defect_Centers(:,1)-angfile.XY_Translation(1);
-trnsY = angfile.Defect_Centers(:,2)-angfile.XY_Translation(2);
+trnsX = angfile.Defect_Centers(:,1);
+trnsY = size(angfile.IQimage,2)-angfile.Defect_Centers(:,2); % image y is "inverted"
 defectsFit = polyfit(trnsX,trnsY,1); % yields m, b from y=mx+b
-rot = acos(1/sqrt(1+defectsFit(1)));
+rot = acos(1/sqrt(1+defectsFit(1)^2)); % from dot product
