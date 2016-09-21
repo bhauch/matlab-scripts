@@ -225,7 +225,7 @@ for i = 1:numel(angFiles)
             end
         end
     end
-    clear continue_refine refine_selection
+    clear continue_refine refine_selection ciplot iqplot
     
     % Analyze modified CI image for contiguous black regions of size
     % .Defect_Diam and report centers, radius in .Defect_Centers[x y]
@@ -241,32 +241,43 @@ for i = 1:numel(angFiles)
     disp(['Found ' num2str(sum(centers(:,1)>1)) ' markers in ' ...
             angFiles(i).FileName]);
     angFiles(i).Defect_Centers = centers; % x | y | distance from origin
+    clear xyr j centers
     
-    % Calculate the XY translation based on the closest-to-the-origin
-    % defect center. imtranslate assumes world-coord shift, so account for
+    % Calculate the XY translation based on the nearest corner to a defect
+    % center. imtranslate assumes world-coord shift, so account for pixel
     % pixel size in creating the transform
-    minDistRow = mod(find(centers == min(centers(:,3))),size(centers,1));
-    angFiles(i).XY_PixelTranslation = [centers(minDistRow,1) centers(minDistRow,2)];
+    if (~exist('SHIFT_CORNER','var'))
+        [angFiles(i).XY_PixelTranslation, SHIFT_CORNER] = ... 
+            getPixelShift(size(angFiles(i).IQimage),angFiles(i).Defect_Centers);
+    else
+        % Shift corner is already picked (e.g. not the first EBSD slice)
+        angFiles(i).XY_PixelTranslation = ...
+            getPixelShift(size(angFiles(i).IQimage),angFiles(i).Defect_Centers,SHIFT_CORNER);
+    end
     angFiles(i).XY_Translation = [angFiles(i).XY_PixelTranslation(1)*angFiles(i).imgRef.PixelExtentInWorldX, ...
                                   angFiles(i).XY_PixelTranslation(2)*angFiles(i).imgRef.PixelExtentInWorldY];
-
-    clear xyr centers
     
     % Determine the rotational relationship between the datafile and the
     % x-axis and store the rotation angle
     angFiles(i).RotAngle = getRotation(angFiles(i));
     
-    % Perform translation and rotation by
+    % Perform image translation and rotation about the corner defect
     [angFiles(i).t_IQ, angFiles(i).imgRefT] = imtranslate(angFiles(i).IQimage, ...
                                    angFiles(i).imgRef, ...
                                    -angFiles(i).XY_Translation, ...
                                    'OutputView','full');
-    figure;imshow(angFiles(i).t_IQ); % check result
-    [angFiles(i).RT_IQ, angFiles(i).imgRefR] = imwarp(angFiles(i).t_IQ, ...
-                                   angFiles(i).imgRefT, ...
-                                   getRotationTransform(angFiles(i).RotAngle,0,0));
-    figure;imshow(angFiles(i).RT_IQ); % check result   
-    break % remove to iterate all angFiles
+    angFiles(i).RT_Transform = getRotationTransform(angFiles(i).RotAngle,0,0);
+    %angFiles(i).RT_Transform = getRotationTransform(angFiles(i).RotAngle,angFiles(i).XY_Translation(1),angFiles(i).XY_Translation(2));
+    [angFiles(i).RT_IQ, angFiles(i).imgRefRT] = imwarp(angFiles(i).t_IQ, ...
+                           angFiles(i).imgRefT, angFiles(i).RT_Transform);
+    figure('numbertitle','off','name',['R+T ' angFiles(i).FileName]); imshow(angFiles(i).RT_IQ); % display result   
+    
+    % Generate new X & Y columns for output file by passing through the
+    % transform (needs work yet, missing initial translate)
+    [angFiles(i).outputX, angFiles(i).outputY] = angFiles(i).RT_Transform.transformPointsForward(angFiles(i).FileData(:,4),angFiles(i).FileData(:,5));
+    
+    
+    %break % remove to iterate all angFiles
 end
 disp('EBSD preprocessing has completed');
 clear ss;
