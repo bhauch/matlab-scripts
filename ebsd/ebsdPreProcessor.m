@@ -26,76 +26,95 @@ The general prescription:
         - Include "history" txt file for rapid reprocessing
 %}
 clear;clc;
-INIT_MASK_THRESHOLD = 0.01; % CI < threshold indicates possible marker
-MIN_FIDUCIAL_DIAMETER = 4; % number of pixels wide the markers must be
-INIT_CI_DILATOR = 2;
-
+%% Defaults/Repeat Check
+% Check for an existing preprocessor history file in the active directory
+% that contains instructions for parameters and/or sequences
+% Instruction file extension is .preproc
+if exist('*.preproc','file')
+    INTERACTIVE = false;
+else
+    INTERACTIVE = true;
+    INIT_MASK_THRESHOLD = 0.01; % CI < threshold indicates possible marker
+    MIN_FIDUCIAL_DIAMETER = 4; % number of pixels wide the markers must be
+    INIT_CI_DILATOR = 2;
+    OUTPUT_DIR = 'aligned'; % will be added to current directory
+end
+[status,message] = mkdir(OUTPUT_DIR);
+if (status == 0)
+    error(['Unable to make output directory ' OUTPUT_DIR]);
+elseif strcmpi(message,'') == false
+    disp(['Output dir ' OUTPUT_DIR ' already exists, files may be overwritten in case of naming conflicts.']);
+end
 %% Read in ANG files
+if (~INTERACTIVE)
+    % Grab the listed files from the instruction file
+    
+else % Ask user to select files
+    bFiles_Selected = false;
+    while (bFiles_Selected == false)
+        angFolder = uigetdir('','Select the directory containing the .ANG files');
+        if (angFolder == 0);
+           disp('Folder selection aborted. Exiting Preprocessor');
+           return;
+        else
+            fileList = dir(angFolder);
+            fileList = fileList(~cellfun('isempty',{fileList.date})); % Strip invalid entries
 
-bFiles_Selected = false;
-% Ask user to select files
-while (bFiles_Selected == false)
-    angFolder = uigetdir('','Select the directory containing the .ANG files');
-    if (angFolder == 0);
-       disp('Folder selection aborted. Exiting Preprocessor');
-       return;
-    else
-        fileList = dir(angFolder);
-        fileList = fileList(~cellfun('isempty',{fileList.date})); % Strip invalid entries
-
-%{ 
-angFiles: struct of info/properties
-Column List:
-    FileName - name of the file
-    FileData - the file's data
-    CI_Threshold - custom threshold used for isolating defects
-    Defect_Diam - Threshold Diameter used for defect-finding
-    Defect_Centers - centers of found defects
-    XY_Translation - Coordinate shift used to make one defect center =(0,0)
-    RotAngle - the rotation angle for the best-fit line through the defects
-%}
-        j = numel(fileList);
-        hasANGfiles = false;
-        for i = numel(fileList):-1:1;
-            if regexp(fileList(i).name,'\.[Aa][Nn][Gg]')
-                hasANGfiles = true;
-                angFiles(j).FileName = fileList(i).name;
-                angFiles(j).FileHeader = [];
-                angFiles(j).FileData = [];
-                angFiles(j).CI_Threshold = INIT_MASK_THRESHOLD;
-                angFiles(j).Defect_Diam = MIN_FIDUCIAL_DIAMETER;
-                angFiles(j).Defect_Centers = [];
-                angFiles(j).XY_PixelTranslation = [];
-                angFiles(j).RotAngle = 0;
-                j = j - 1;
-            end
-        end
-        if (hasANGfiles)
-            angFiles = angFiles(~arrayfun(@(s) all(structfun(@isempty,s)), angFiles));
-            % Display files selected for preprocessing
-            disp(['.ANG files present in ' angFolder]);
-            disp({angFiles.FileName}');
-            user_response = '';
-            while (strcmpi(user_response,''))
-                user_response = questdlg('Use these files?');
-                if (strcmpi(user_response,'cancel'))
-                    disp('Exiting preprocessor...');
-                    clear
-                    return;
+    %{ 
+    angFiles: struct of info/properties
+    Column List:
+        FileName - name of the file
+        FileData - the file's data
+        CI_Threshold - custom threshold used for isolating defects
+        Defect_Diam - Threshold Diameter used for defect-finding
+        Defect_Centers - centers of found defects
+        XY_Translation - Coordinate shift used to make one defect center =(0,0)
+        RotAngle - the rotation angle for the best-fit line through the defects
+    %}
+            j = numel(fileList);
+            hasANGfiles = false;
+            for i = numel(fileList):-1:1;
+                if regexp(fileList(i).name,'\.[Aa][Nn][Gg]')
+                    hasANGfiles = true;
+                    angFiles(j).FileName = fileList(i).name;
+                    angFiles(j).FileHeader = [];
+                    angFiles(j).FileData = [];
+                    angFiles(j).CI_Threshold = INIT_MASK_THRESHOLD;
+                    angFiles(j).Defect_Diam = MIN_FIDUCIAL_DIAMETER;
+                    angFiles(j).Defect_Centers = [];
+                    angFiles(j).XY_PixelTranslation = [];
+                    angFiles(j).RotAngle = 0;
+                    j = j - 1;
                 end
             end
-            if (strcmpi(user_response,'yes'))
-                bFiles_Selected = true;
+            if (hasANGfiles)
+                angFiles = angFiles(~arrayfun(@(s) all(structfun(@isempty,s)), angFiles));
+                % Display files selected for preprocessing
+                disp(['.ANG files present in ' angFolder]);
+                disp({angFiles.FileName}');
+                user_response = '';
+                while (strcmpi(user_response,''))
+                    user_response = questdlg('Use these files?');
+                    if (strcmpi(user_response,'cancel'))
+                        disp('Exiting preprocessor...');
+                        clear
+                        return;
+                    end
+                end
+                if (strcmpi(user_response,'yes'))
+                    bFiles_Selected = true;
+                else
+                    clear fileList angFolder angFiles i j
+                end
             else
-                clear fileList angFolder angFiles i j
+                disp(['No ANG files in ' angFolder])
             end
-        else
-            disp(['No ANG files in ' angFolder])
         end
     end
+    clear i j user_response hasANGfiles fileList bFiles_Selected
 end
-clear i j user_response hasANGfiles fileList bFiles_Selected
-%% File Loop
+
+%% Slice Processing
 
 % Load data from the ANG files now that the user has confirmed the
 % selection of files to use
@@ -262,22 +281,67 @@ for i = 1:numel(angFiles)
     angFiles(i).RotAngle = getRotation(angFiles(i));
     
     % Perform image translation and rotation about the corner defect
-    [angFiles(i).t_IQ, angFiles(i).imgRefT] = imtranslate(angFiles(i).IQimage, ...
-                                   angFiles(i).imgRef, ...
-                                   -angFiles(i).XY_Translation, ...
-                                   'OutputView','full');
-    angFiles(i).RT_Transform = getRotationTransform(angFiles(i).RotAngle,0,0);
-    %angFiles(i).RT_Transform = getRotationTransform(angFiles(i).RotAngle,angFiles(i).XY_Translation(1),angFiles(i).XY_Translation(2));
-    [angFiles(i).RT_IQ, angFiles(i).imgRefRT] = imwarp(angFiles(i).t_IQ, ...
-                           angFiles(i).imgRefT, angFiles(i).RT_Transform);
+    %[angFiles(i).t_IQ, angFiles(i).imgRefT] = imtranslate(angFiles(i).IQimage, ...
+    %                               angFiles(i).imgRef, ...
+    %                               -angFiles(i).XY_Translation, ...
+    %                               'OutputView','full');
+    angFiles(i).RT_Transform1 = getRotationTransform(angFiles(i).RotAngle,0,0);
+    %[angFiles(i).RT_IQ, angFiles(i).imgRefRT] = imwarp(angFiles(i).t_IQ, ...
+    %                       angFiles(i).imgRefT, angFiles(i).RT_Transform);
+    angFiles(i).RT_Transform = getRotationTransform(angFiles(i).RotAngle,angFiles(i).XY_Translation(1),angFiles(i).XY_Translation(2));
+    [angFiles(i).RT_IQ, angFiles(i).imgRefRT] = imwarp(angFiles(i).IQimage, ...
+        angFiles(i).imgRef, angFiles(i).RT_Transform);
     figure('numbertitle','off','name',['R+T ' angFiles(i).FileName]); imshow(angFiles(i).RT_IQ); % display result   
     
     % Generate new X & Y columns for output file by passing through the
     % transform (needs work yet, missing initial translate)
     [angFiles(i).outputX, angFiles(i).outputY] = angFiles(i).RT_Transform.transformPointsForward(angFiles(i).FileData(:,4),angFiles(i).FileData(:,5));
-    
-    
+    angFiles(i).outputName = ['procd_' angFiles(i).FileName];
+    if i>1 ;break;end;
     %break % remove to iterate all angFiles
 end
+%% ANG output
+% Assemble & write the ANG files with new XY coordinates. IQ/CI are
+% unchanged
+
+for i = 1:numel(angFiles)
+    if size(angFiles(i).outputX,1) > 0
+        outputHeader = angFiles(i).FileHeader;
+        outputData = angFiles(i).FileData;
+        outputData(:,4)=angFiles(i).outputX;
+        outputData(:,5)=angFiles(i).outputY;
+        outputFileName = ['.\\' OUTPUT_DIR '\\' angFiles(i).outputName];
+        fd = fopen(outputFileName,'w');                         % Open file
+        fprintf(fd, '%s\n',outputHeader{1:size(outputHeader)}); % Write header
+        fclose(fd);                                             % Close file
+        dlmwrite(outputFileName,outputData,'-append','delimiter','\t'); % Data
+    end
+end
+%% History Output-to-file
+% Write history file into the output dir
+% Since output of ang files results in direct overwrite given naming
+% conflict, should attempt to not overwrite existing history files so that
+% past processing can be recovered
+
+% save the input file listing, ci threshold per file, minimum defect size,
+% defect centers (pixel coords!), the corner for shifting, the rotation
+% angle per file, and the dilator history
+
+%historyOutput = getHistoryOutput(angFiles);
+outputName = ['.\\' OUTPUT_DIR '\\history_' date '.pphist'];
+fileExists = exist(outputName,'file');
+while fileExists ~= 0
+    % mutate history file's name until a unique is available
+    outputName = ['.\\' OUTPUT_DIR '\\history_' date '_' ...
+        datestr(now,'HH.MM.SS') '.pphist'];
+    fileExists = exist(outputName,'file');
+end
+
+% Write history file
+%fd = fopen(outputName,'w');
+%fprintf(fd,'%s\n',['EBSD preprocessing completed: ' datestr(now)]);
+%fprintf(fd,'%s\n',historyOutput{1:size(historyOutput)});
+%fclose(fd);
+
 disp('EBSD preprocessing has completed');
 clear ss;
