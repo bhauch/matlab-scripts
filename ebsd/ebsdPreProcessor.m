@@ -30,24 +30,26 @@ clear;clc;
 % Check for an existing preprocessor history file in the active directory
 % that contains instructions for parameters and/or sequences
 % Instruction file extension is .preproc
-if exist('*.preproc','file')
+if exist('*.preproc','file') > 0
     INTERACTIVE = false;
 else
     INTERACTIVE = true;
     INIT_MASK_THRESHOLD = 0.01; % CI < threshold indicates possible marker
-    MIN_FIDUCIAL_DIAMETER = 4; % number of pixels wide the markers must be
+    MIN_FIDUCIAL_DIAMETER = 4;  % number of pixels wide the markers must be
     INIT_CI_DILATOR = 2;
-    OUTPUT_DIR = 'aligned'; % will be added to current directory
+    OUTPUT_DIR = 'aligned';     % will be added to current directory
 end
 [status,message] = mkdir(OUTPUT_DIR);
 if (status == 0)
     error(['Unable to make output directory ' OUTPUT_DIR]);
 elseif strcmpi(message,'') == false
-    disp(['Output dir ' OUTPUT_DIR ' already exists, files may be overwritten in case of naming conflicts.']);
+    disp(['Output dir ' OUTPUT_DIR ' already exists, files may be overwritten if there are name conflicts.']);
+    clear status message
 end
 %% Read in ANG files
 if (~INTERACTIVE)
-    % Grab the listed files from the instruction file
+    % Grab the listed files from the instruction file, the per-file
+    % settings (if more than one line, else apply given line to all)
     
 else % Ask user to select files
     bFiles_Selected = false;
@@ -76,22 +78,22 @@ else % Ask user to select files
             for i = numel(fileList):-1:1;
                 if regexp(fileList(i).name,'\.[Aa][Nn][Gg]')
                     hasANGfiles = true;
-                    angFiles(j).FileName = fileList(i).name;
-                    angFiles(j).FileHeader = [];
-                    angFiles(j).FileData = [];
-                    angFiles(j).CI_Threshold = INIT_MASK_THRESHOLD;
-                    angFiles(j).Defect_Diam = MIN_FIDUCIAL_DIAMETER;
-                    angFiles(j).Defect_Centers = [];
-                    angFiles(j).XY_PixelTranslation = [];
-                    angFiles(j).RotAngle = 0;
+                    aF(j).FileName = fileList(i).name;
+                    aF(j).FileHeader = [];
+                    aF(j).FileData = [];
+                    aF(j).CI_Threshold = INIT_MASK_THRESHOLD;
+                    aF(j).Defect_Diam = MIN_FIDUCIAL_DIAMETER;
+                    aF(j).Defect_Centers = [];
+                    aF(j).XY_PixelShift = [];
+                    aF(j).RotAngle = 0;
                     j = j - 1;
                 end
             end
             if (hasANGfiles)
-                angFiles = angFiles(~arrayfun(@(s) all(structfun(@isempty,s)), angFiles));
+                aF = aF(~arrayfun(@(s) all(structfun(@isempty,s)), aF));
                 % Display files selected for preprocessing
                 disp(['.ANG files present in ' angFolder]);
-                disp({angFiles.FileName}');
+                disp({aF.FileName}');
                 user_response = '';
                 while (strcmpi(user_response,''))
                     user_response = questdlg('Use these files?');
@@ -120,25 +122,25 @@ end
 % selection of files to use
 % j1 | F | j2 | x | y | IQ | CI | PhaseID | DetectI | Fit
 ss=get(0,'screensize');
-for i = 1:numel(angFiles)
-    rawfile = importdata(strcat(angFolder,'\\',angFiles(i).FileName),' ',38);
-    angFiles(i).FileHeader = rawfile.textdata;
-    angFiles(i).FileData = rawfile.data;
+for i = 1:numel(aF)
+    rawfile = importdata(strcat(angFolder,'\\',aF(i).FileName),' ',38);
+    aF(i).FileHeader = rawfile.textdata;
+    aF(i).FileData = rawfile.data;
     clear rawfile
     
     % Obtain X-by-Y matrix of IQ values for image rendering
-    IQArray = angfile2xydata(angFiles(i),'iq');
-    angFiles(i).IQimage = mat2gray(IQArray);
+    IQArray = angfile2xydata(aF(i),'iq');
+    aF(i).IQimage = mat2gray(IQArray);
 
     % Generate spatial reference object 
-    angFiles(i).imgRef = imref2d(size(IQArray), ...
-             str2double(strrep(angFiles(i).FileHeader{27},'# XSTEP: ','')), ...
-             str2double(strrep(angFiles(i).FileHeader{28},'# YSTEP: ','')));
+    aF(i).imgRef = imref2d(size(IQArray), ...
+             str2double(strrep(aF(i).FileHeader{27},'# XSTEP: ','')), ...
+             str2double(strrep(aF(i).FileHeader{28},'# YSTEP: ','')));
     
     % Render side-by-side plot of IQ and the thresholded pixels
     fheight = size(IQArray,2)+10; 
     fwidth = 2*size(IQArray,1)+40;
-    fh = figure('name',['Thresholded ' angFiles(i).FileName], ...
+    fh = figure('name',['Thresholded ' aF(i).FileName], ...
         'outerposition',[10 ... Distance to left screen border
                          ss(4)-10-fheight ... Distance from bottom
                          fwidth fheight], ...
@@ -148,36 +150,36 @@ for i = 1:numel(angFiles)
         'visible','off');
     colormap('gray');
     iqplot = subplot(1,2,1);
-    imshow(angFiles(i).IQimage);title('IQ Map');
+    imshow(aF(i).IQimage);title('IQ Map');
     ciplot = subplot(1,2,2,'DataAspectRatio',[1 1 1]);
         
     iterate_threshold = true;
     while iterate_threshold
         % Create ANG-specific mask for CI < $MASK_THRESHOLD
-        cipixels = 1-(angFiles(i).FileData(:,7)<angFiles(i).CI_Threshold);
-        scatter(ciplot,angFiles(i).FileData(:,4),angFiles(i).FileData(:,5),1,cipixels,'filled');
-        title(strcat('CI Threshold = ',num2str(angFiles(i).CI_Threshold)));
-        xlabel('µm');ylabel('µm');
+        cipixels = 1-(aF(i).FileData(:,7)<aF(i).CI_Threshold);
+        scatter(ciplot,aF(i).FileData(:,4),aF(i).FileData(:,5),1,cipixels,'filled');
+        title(strcat('CI Threshold = ',num2str(aF(i).CI_Threshold)));
+        xlabel('µm'); ylabel('µm');
         ciplot.YDir = 'reverse';
         figure(fh) % Make visible
         
         % Ask user to confirm threshold value
         user_response = '';
         while (strcmpi(user_response,''))
-            user_response=questdlg(strcat('Use threshold value =',num2str(angFiles(i).CI_Threshold)));
+            user_response=questdlg(strcat('Use threshold value = ',num2str(aF(i).CI_Threshold)));
         end
         if (strcmpi(user_response,'yes'))
             iterate_threshold = false;
         else
             % ask for new CI_Threshold value
-            need_new_threshold=true;
+            need_new_threshold = true;
             while need_new_threshold
-                user_response=input(['Old threshold was ' num2str(angFiles(i).CI_Threshold) '\nEnter new CI threshold value: '],'s');
+                user_response = input(['Old threshold was ' num2str(aF(i).CI_Threshold) '\nEnter new CI threshold value: '],'s');
                 user_response = str2double(user_response);
-                if (user_response>=0 && user_response < 1)
-                    need_new_threshold=false;
+                if (user_response >= 0 && user_response < 1)
+                    need_new_threshold = false;
                     disp(['Repeating with threshold value = ' num2str(user_response)]);
-                    angFiles(i).CI_Threshold=user_response;
+                    aF(i).CI_Threshold = user_response;
                     clear user_response;
                 else
                     disp('Invalid response. Threshold must be numeric, between 0 and 1')
@@ -189,22 +191,22 @@ for i = 1:numel(angFiles)
     
     % User has iteratively chosen the appropriate CI to use. Convert the
     % cipixels vector into an image matrix as was done for IQimage
-    CIArray = angfile2xydata(angFiles(i),'ci');
-    angFiles(i).RawCIimage = mat2gray(CIArray);
-    angFiles(i).CIimage = mat2gray(1-(CIArray<angFiles(i).CI_Threshold));
-    subplot(iqplot) % overwrite IQmap with the thresholded CI image
-    imshow(angFiles(i).CIimage);title('Original Thresholded CI image');
-    clear cipixels iterate_threshold CIArray
+    CIArray = angfile2xydata(aF(i),'ci');
+    aF(i).RawCIimage = mat2gray(CIArray);
+    aF(i).CIimage = mat2gray(1-(CIArray<aF(i).CI_Threshold));
+    subplot(iqplot)         % overwrite IQmap with the thresholded CI image
+    imshow(aF(i).CIimage); title('Original Thresholded CI image');
+    clear cipixels iterate_threshold CIArray fheight fwidth IQArray
     
     % Use pixel erosion and growth to remove isolated low-CI pixels 
     refine_selection = true; continue_refine = false;
     refine_operator_radius = INIT_CI_DILATOR;
     while refine_selection
         if continue_refine == false;
-            angFiles(i).dilatorHistory = num2str(refine_operator_radius);
-            modCIimage = angFiles(i).CIimage; % load from original thresholded CI image
+            aF(i).dilatorHistory = num2str(refine_operator_radius);
+            modCIimage = aF(i).CIimage;     % load original thresholded CI image
         else
-            angFiles(i).dilatorHistory = strcat(angFiles(i).dilatorHistory,'>',num2str(refine_operator_radius));
+            aF(i).dilatorHistory = strcat(aF(i).dilatorHistory,'->',num2str(refine_operator_radius));
         end
         disp(['Using disk of radius ' num2str(refine_operator_radius)])
         dilator = strel('disk',refine_operator_radius);
@@ -213,19 +215,19 @@ for i = 1:numel(angFiles)
         
         % Show modified image (dilate = increase white, erode = increase black)
         figure(fh); subplot(ciplot);
-        imshow(modCIimage);title(['Cleaned w/radius ' angFiles(i).dilatorHistory]);
+        imshow(modCIimage); title(['Cleaned w/radius ' aF(i).dilatorHistory]);
         
         % Ask user for input
         user_response = '';
         while (strcmpi(user_response,''))
-            user_response=questdlg(['End cleaning step for ' angFiles(i).FileName '?'], ...
-                            angFiles(i).FileName, ... prompt title
+            user_response=questdlg(['End cleaning step for ' aF(i).FileName '?'], ...
+                            aF(i).FileName, ... prompt title
                             'Yes', 'Do More', 'Start Over', ...
                             'Yes'); % Default to Yes
         end
         if (strcmpi(user_response,'yes')) % user is satisfied with this result
             refine_selection = false; continue_refine = false;
-            angFiles(i).modCIimage = modCIimage;
+            aF(i).modCIimage = modCIimage;
             clear modCIimage dilator refine_operator_radius user_response
         else
             % ask for new disk radius value
@@ -234,7 +236,7 @@ for i = 1:numel(angFiles)
                 % User wants to restart the refinement process from the
                 % original image... nothing to do here
                 continue_refine = false;
-                disp(['Processing thresholded ' angFiles(i).FileName ...
+                disp(['Processing thresholded ' aF(i).FileName ...
                     ' CI image starting with disk radius = ' ...
                     num2str(refine_operator_radius)]);
             else
@@ -244,79 +246,72 @@ for i = 1:numel(angFiles)
             end
         end
     end
-    clear continue_refine refine_selection ciplot iqplot
+    clear continue_refine refine_selection ciplot iqplot fh
     
     % Analyze modified CI image for contiguous black regions of size
     % .Defect_Diam and report centers, radius in .Defect_Centers[x y]
-    % Analyze coordinates for circular regions of diameter .Defect_Diam
-    angFiles(i).defects = bwboundaries(1-angFiles(i).modCIimage,'noholes');
-    centers = zeros(size(angFiles(i).defects,1),3);
-    for j = 1:size(angFiles(i).defects,1)
-        xyr = CircleFitByPratt(angFiles(i).defects{j});
-        if ((xyr(1,3)*2) >= angFiles(i).Defect_Diam)
+    % Analyze coordinates for circular regions of min diameter .Defect_Diam
+    aF(i).defects = bwboundaries(1-aF(i).modCIimage,'noholes');
+    centers = zeros(size(aF(i).defects,1),3);
+    for j = 1:size(aF(i).defects,1)
+        xyr = CircleFitByPratt(aF(i).defects{j});
+        if ((xyr(1,3)*2) >= aF(i).Defect_Diam)
             centers(j,:) = [xyr(1,2) xyr(1,1) sqrt(xyr(1,1)^2+xyr(1,2)^2)];
         end % images have inverted x,y referencing, hence the 1,2 then 1,1 above
     end
-    disp(['Found ' num2str(sum(centers(:,1)>1)) ' markers in ' ...
-            angFiles(i).FileName]);
-    angFiles(i).Defect_Centers = centers; % x | y | distance from origin
+    disp(['Found ' num2str(sum(centers(:,1)>1)) ' markers in ' aF(i).FileName]);
+    aF(i).Defect_Centers = centers; % x | y | distance from origin
     clear xyr j centers
     
     % Calculate the XY translation based on the nearest corner to a defect
     % center. imtranslate assumes world-coord shift, so account for pixel
     % pixel size in creating the transform
     if (~exist('SHIFT_CORNER','var'))
-        [angFiles(i).XY_PixelTranslation, SHIFT_CORNER] = ... 
-            getPixelShift(size(angFiles(i).IQimage),angFiles(i).Defect_Centers);
+        [aF(i).XY_PixelShift, SHIFT_CORNER] = ... 
+            getPixelShift(size(aF(i).IQimage),aF(i).Defect_Centers);
     else
         % Shift corner is already picked (e.g. not the first EBSD slice)
-        angFiles(i).XY_PixelTranslation = ...
-            getPixelShift(size(angFiles(i).IQimage),angFiles(i).Defect_Centers,SHIFT_CORNER);
+        aF(i).XY_PixelShift = ...
+            getPixelShift(size(aF(i).IQimage),aF(i).Defect_Centers,SHIFT_CORNER);
     end
-    angFiles(i).XY_Translation = [angFiles(i).XY_PixelTranslation(1)*angFiles(i).imgRef.PixelExtentInWorldX, ...
-                                  angFiles(i).XY_PixelTranslation(2)*angFiles(i).imgRef.PixelExtentInWorldY];
+    aF(i).XY_Translation = [aF(i).XY_PixelShift(1)*aF(i).imgRef.PixelExtentInWorldX, ...
+                            aF(i).XY_PixelShift(2)*aF(i).imgRef.PixelExtentInWorldY];
     
     % Determine the rotational relationship between the datafile and the
     % x-axis and store the rotation angle
-    angFiles(i).RotAngle = getRotation(angFiles(i));
+    aF(i).RotAngle = getRotation(aF(i));
     
     % Perform image translation and rotation about the corner defect
-    %[angFiles(i).t_IQ, angFiles(i).imgRefT] = imtranslate(angFiles(i).IQimage, ...
-    %                               angFiles(i).imgRef, ...
-    %                               -angFiles(i).XY_Translation, ...
-    %                               'OutputView','full');
-    angFiles(i).RT_Transform1 = getRotationTransform(angFiles(i).RotAngle,0,0);
-    %[angFiles(i).RT_IQ, angFiles(i).imgRefRT] = imwarp(angFiles(i).t_IQ, ...
-    %                       angFiles(i).imgRefT, angFiles(i).RT_Transform);
-    angFiles(i).RT_Transform = getRotationTransform(angFiles(i).RotAngle,angFiles(i).XY_Translation(1),angFiles(i).XY_Translation(2));
-    [angFiles(i).RT_IQ, angFiles(i).imgRefRT] = imwarp(angFiles(i).IQimage, ...
-        angFiles(i).imgRef, angFiles(i).RT_Transform);
-    figure('numbertitle','off','name',['R+T ' angFiles(i).FileName]); imshow(angFiles(i).RT_IQ); % display result   
+    aF(i).RT_Transform = getRotationTransform(aF(i).RotAngle,aF(i).XY_Translation(1),aF(i).XY_Translation(2));
+    [aF(i).RT_IQ, aF(i).imgRefRT] = imwarp(aF(i).IQimage, aF(i).imgRef, aF(i).RT_Transform);
+    figure('numbertitle','off','name',['R+T ' aF(i).FileName]); 
+    imshow(aF(i).RT_IQ);        % display result   
     
     % Generate new X & Y columns for output file by passing through the
     % transform (needs work yet, missing initial translate)
-    [angFiles(i).outputX, angFiles(i).outputY] = angFiles(i).RT_Transform.transformPointsForward(angFiles(i).FileData(:,4),angFiles(i).FileData(:,5));
-    angFiles(i).outputName = ['procd_' angFiles(i).FileName];
-    if i>1 ;break;end;
-    %break % remove to iterate all angFiles
+    [aF(i).outputX, aF(i).outputY] = aF(i).RT_Transform.transformPointsForward(aF(i).FileData(:,4),aF(i).FileData(:,5));
+    aF(i).outputName = ['procd_' aF(i).FileName];
+    
+    if i>1 ;break;end; % remove to iterate all angFiles
 end
 %% ANG output
 % Assemble & write the ANG files with new XY coordinates. IQ/CI are
 % unchanged
 
-for i = 1:numel(angFiles)
-    if size(angFiles(i).outputX,1) > 0
-        outputHeader = angFiles(i).FileHeader;
-        outputData = angFiles(i).FileData;
-        outputData(:,4)=angFiles(i).outputX;
-        outputData(:,5)=angFiles(i).outputY;
-        outputFileName = ['.\\' OUTPUT_DIR '\\' angFiles(i).outputName];
+for i = 1:numel(aF)
+    if size(aF(i).outputX,1) > 0
+        outputHeader = aF(i).FileHeader;
+        outputData = aF(i).FileData;
+        outputData(:,4)=aF(i).outputX;
+        outputData(:,5)=aF(i).outputY;
+        outputFileName = ['.\\' OUTPUT_DIR '\\' aF(i).outputName];
         fd = fopen(outputFileName,'w');                         % Open file
         fprintf(fd, '%s\n',outputHeader{1:size(outputHeader)}); % Write header
         fclose(fd);                                             % Close file
         dlmwrite(outputFileName,outputData,'-append','delimiter','\t'); % Data
     end
 end
+clear outputHeader outputData outputFileName fd
 %% History Output-to-file
 % Write history file into the output dir
 % Since output of ang files results in direct overwrite given naming
@@ -344,4 +339,4 @@ end
 %fclose(fd);
 
 disp('EBSD preprocessing has completed');
-clear ss;
+clear ss fileExists outputName INTERACTIVE;
