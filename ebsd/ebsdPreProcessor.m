@@ -105,6 +105,7 @@ else % Ask user to select files
                 end
                 if (strcmpi(user_response,'yes'))
                     bFiles_Selected = true;
+                    OpHistory = {aF.FileName};
                 else
                     clear fileList angFolder angFiles i j
                 end
@@ -150,7 +151,7 @@ for i = 1:numel(aF)
         'visible','off');
     colormap('gray');
     iqplot = subplot(1,2,1);
-    imshow(aF(i).IQimage);title('IQ Map');
+    imshow(aF(i).IQimage); title('IQ Map');
     ciplot = subplot(1,2,2,'DataAspectRatio',[1 1 1]);
         
     iterate_threshold = true;
@@ -166,7 +167,7 @@ for i = 1:numel(aF)
         % Ask user to confirm threshold value
         user_response = '';
         while (strcmpi(user_response,''))
-            user_response=questdlg(strcat('Use threshold value = ',num2str(aF(i).CI_Threshold)));
+            user_response = questdlg(strcat('Use threshold value = ',num2str(aF(i).CI_Threshold)));
         end
         if (strcmpi(user_response,'yes'))
             iterate_threshold = false;
@@ -182,7 +183,7 @@ for i = 1:numel(aF)
                     aF(i).CI_Threshold = user_response;
                     clear user_response;
                 else
-                    disp('Invalid response. Threshold must be numeric, between 0 and 1')
+                    disp('Invalid response. Threshold must be numeric, between 0 and 1');
                 end
             end
             clear need_new_threshold
@@ -274,7 +275,7 @@ for i = 1:numel(aF)
         aF(i).XY_PixelShift = ...
             getPixelShift(size(aF(i).IQimage),aF(i).Defect_Centers,SHIFT_CORNER);
     end
-    aF(i).XY_Translation = [aF(i).XY_PixelShift(1)*aF(i).imgRef.PixelExtentInWorldX, ...
+    aF(i).XY_Shift = [aF(i).XY_PixelShift(1)*aF(i).imgRef.PixelExtentInWorldX, ...
                             aF(i).XY_PixelShift(2)*aF(i).imgRef.PixelExtentInWorldY];
     
     % Determine the rotational relationship between the datafile and the
@@ -282,7 +283,7 @@ for i = 1:numel(aF)
     aF(i).RotAngle = getRotation(aF(i));
     
     % Perform image translation and rotation about the corner defect
-    aF(i).RT_Transform = getRotationTransform(aF(i).RotAngle,aF(i).XY_Translation(1),aF(i).XY_Translation(2));
+    aF(i).RT_Transform = getRotationTransform(aF(i).RotAngle,aF(i).XY_Shift(1),aF(i).XY_Shift(2));
     [aF(i).RT_IQ, aF(i).imgRefRT] = imwarp(aF(i).IQimage, aF(i).imgRef, aF(i).RT_Transform);
     figure('numbertitle','off','name',['R+T ' aF(i).FileName]); 
     imshow(aF(i).RT_IQ);        % display result   
@@ -294,6 +295,9 @@ for i = 1:numel(aF)
     
     if i>1 ;break;end; % remove to iterate all angFiles
 end
+OpHistory = {OpHistory; {aF.CI_Threshold}; {aF.dilatorHistory}; ...
+             {aF.Defect_Diam}; {['ShiftCorner: ' num2str(SHIFT_CORNER)]}; ...
+             {aF.XY_Shift}; {aF.RotAngle}; {aF.outputName}};
 %% ANG output
 % Assemble & write the ANG files with new XY coordinates. IQ/CI are
 % unchanged
@@ -322,11 +326,10 @@ clear outputHeader outputData outputFileName fd
 % defect centers (pixel coords!), the corner for shifting, the rotation
 % angle per file, and the dilator history
 
-%historyOutput = getHistoryOutput(angFiles);
 outputName = ['.\\' OUTPUT_DIR '\\history_' date '.pphist'];
 fileExists = exist(outputName,'file');
 while fileExists ~= 0
-    % mutate history file's name until a unique is available
+    % add the time to make the history file unique
     outputName = ['.\\' OUTPUT_DIR '\\history_' date '_' ...
         datestr(now,'HH.MM.SS') '.pphist'];
     fileExists = exist(outputName,'file');
@@ -334,9 +337,13 @@ end
 
 % Write history file
 %fd = fopen(outputName,'w');
-%fprintf(fd,'%s\n',['EBSD preprocessing completed: ' datestr(now)]);
-%fprintf(fd,'%s\n',historyOutput{1:size(historyOutput)});
+%for i=1:size(OpHistory,1)
+%    fprintf(fd,'%s\n',OpHistory{i}{1:size(OpHistory{i},2)});
+%end
+%fprintf(fd,'%s\n',OpHistory{1:size(OpHistory,1)});
 %fclose(fd);
 
 disp('EBSD preprocessing has completed');
-clear ss fileExists outputName INTERACTIVE;
+clear ss fileExists outputName INTERACTIVE i angFolder;
+clear INIT_CI_DILATOR INIT_MASK_THRESHOLD MIN_FIDUCIAL_DIAMETER SHIFT_CORNER
+clear OUTPUT_DIR ans
